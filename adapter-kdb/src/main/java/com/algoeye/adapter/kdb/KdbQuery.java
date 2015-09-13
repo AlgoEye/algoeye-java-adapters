@@ -7,9 +7,7 @@ import org.apache.log4j.Logger;
 
 import java.io.IOException;
 import java.lang.reflect.Array;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 
 /**
  * Created by nick on 30/08/15.
@@ -28,8 +26,7 @@ public class KdbQuery
     public boolean hasRefData()
     {
         try
-        {
-            Object count = kdb.context().k("count refdata");
+        {Object count = kdb.context().k("count refdata");
             return 0 < (Long)count;
         }
         catch (c.KException e)
@@ -49,38 +46,18 @@ public class KdbQuery
         l.debug("Executing KDB expiry: " + query);
         try
         {
-            c.Flip flip = (c.Flip)kdb.context().k(query);
-
-            ArrayList<IInstrument> instruments = new ArrayList<>();
-
-            int rows = Array.getLength(flip.y[0]);
-            for (int i = 0; i < rows; ++i)
+            Object result = kdb.context().k(query);
+            if (result instanceof c.Flip)
             {
-                String symbol = (String)c.at(flip.y[0], i);
-                String type = (String)c.at(flip.y[1], i);
-                String underlying = (String)c.at(flip.y[2], i);
-                String exchangeSymbol = (String)c.at(flip.y[3], i);
-                String exchange = (String)c.at(flip.y[4], i);
-                String currency = (String)c.at(flip.y[5], i);
-                Integer contractSize = (Integer)c.at(flip.y[6], i);
-                Date expiryDate = (Date)c.at(flip.y[7], i);
-                Double strike = (Double)c.at(flip.y[8], i);
-                String right = (String)c.at(flip.y[9], i);
-
-                instruments.add(new Instrument(
-                        symbol,
-                        type,
-                        underlying,
-                        exchangeSymbol,
-                        exchange,
-                        currency,
-                        contractSize,
-                        expiryDate,
-                        strike != null ? strike : 0,
-                        right));
+                return readInstruments(convertFlip((c.Flip)result));
             }
-
-            return instruments;
+            else
+            {
+                c.Dict dict = (c.Dict)result;
+                Map<String, Object> table = convertFlip((c.Flip) dict.x);
+                table.putAll(convertFlip((c.Flip) dict.y));
+                return readInstruments(table);
+            }
         }
         catch (c.KException e)
         {
@@ -92,5 +69,52 @@ public class KdbQuery
         }
 
         return null;
+    }
+
+    protected Map<String, Object> convertFlip(c.Flip flip)
+    {
+        Map<String, Object> result = new HashMap<>();
+
+        int cols = Array.getLength(flip.x);
+        for (int i = 0; i < cols; ++i)
+        {
+            result.put(flip.x[i], flip.y[i]);
+        }
+
+        return result;
+    }
+
+    protected List<IInstrument> readInstruments(Map<String, Object> table)
+    {
+        ArrayList<IInstrument> instruments = new ArrayList<>();
+
+        String[] sym = (String[])table.get("sym");
+        String[] typ = (String[])table.get("typ");
+        String[] underlying = (String[])table.get("underlying");
+        String[] exsym = (String[])table.get("exsym");
+        String[] exchange = (String[])table.get("exchange");
+        String[] ccy = (String[])table.get("ccy");
+        int[] lot =(int[]) table.get("lot");
+        Date[] expiry = (Date[])table.get("expiry");
+        double[] strike = (double[])table.get("strike");
+        String[] right = (String[])table.get("right");
+
+        int rows = Array.getLength(table.get("sym"));
+        for (int i = 0; i < rows; ++i)
+        {
+            instruments.add(new Instrument(
+                    sym[i],
+                    typ[i],
+                    underlying[i],
+                    exsym[i],
+                    exchange[i],
+                    ccy[i],
+                    lot[i],
+                    expiry[i],
+                    !Double.isNaN(strike[i]) ? strike[i] : 0,
+                    right[i]));
+        }
+
+        return instruments;
     }
 }
