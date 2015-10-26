@@ -68,19 +68,19 @@ public class IBContractSymbolsFeeder extends IBCallbackAdaptor implements Runnab
         {
             String type = contractDetails.m_summary.m_secType;
             double strike = contractDetails.m_summary.m_strike;
-            int contractSize = Integer.parseInt(contractDetails.m_summary.m_multiplier);
+            int contractSize = contractDetails.m_summary.m_multiplier != null ? Integer.parseInt(contractDetails.m_summary.m_multiplier) : 1;
             Date expiryDate = convertExpiryDate(contractDetails.m_summary.m_expiry);
+            String exchangeSymbol = contractDetails.m_summary.m_localSymbol;
             String pattern = symbolFormat.get(type);
             String code = pattern != null ?
                     MessageFormat.format(pattern, underlying, expiryDate, strike, contractDetails.m_summary.m_right) :
-                    underlying;
+                    exchangeSymbol;
             code = code.toUpperCase();
-            String exchangeSymbol = contractDetails.m_summary.m_localSymbol;
 
             l.debug("Received " + type + " contract: " + code + " (" + exchangeSymbol + ")");
 
             listener.OnInstrument(new Instrument(code, type, underlying,
-                    exchangeSymbol, exchange, currency, contractSize,
+                    exchangeSymbol, contractDetails.m_summary.m_exchange, contractDetails.m_summary.m_currency, contractSize,
                     expiryDate, strike, contractDetails.m_summary.m_right));
         }
 
