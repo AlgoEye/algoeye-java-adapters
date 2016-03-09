@@ -16,5 +16,8 @@ public interface IPriceAndTradeFeedProvider
     void subscribeToPriceAndTradeFeed(List<IInstrument> instruments, List<IPriceAndTradeFeedListener> listeners);
     void unsubscribeFromPriceAndTradeFeed(List<IInstrument> instruments, List<IPriceAndTradeFeedListener> listeners);
 
+    void subscribeToPriceDepth(List<IInstrument> instruments, List<IPriceAndTradeFeedListener> listeners);
+
+
     SubscriptionState getSubscriptionState(IInstrument instrument);
 }

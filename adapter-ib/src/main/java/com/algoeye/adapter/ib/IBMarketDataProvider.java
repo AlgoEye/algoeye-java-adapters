@@ -21,12 +21,11 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
 {
     private final Logger l = Logger.getLogger(getClass());
 
-    private final SimpleDateFormat expiryFormat = new SimpleDateFormat("yyyyMMdd");
-
     private final IBConnection connection;
     private final Map<IInstrument, InstrumentData> dataBySymbol = new HashMap<IInstrument, InstrumentData>();
     private final Map<Integer, InstrumentData> dataByTickId = new HashMap<Integer, InstrumentData>();
-    
+    private final Map<Integer, InstrumentData> dataByDepthId = new HashMap<Integer, InstrumentData>();
+
 	public IBMarketDataProvider(IBConnection connection)
     {
         this.connection = connection;
@@ -39,7 +38,9 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
         final VolumePrice ask = new VolumePrice();
         final VolumePrice last = new VolumePrice();
         final List<IPriceAndTradeFeedListener> listeners = new ArrayList<IPriceAndTradeFeedListener>();
+        int volume = 0;
         int tickerId = 0;
+        int depthId = 0;
         int resubscribeCounter = 10;
         private IPriceAndTradeFeedProvider.SubscriptionState subscriptionState = SubscriptionState.UNKNOWN;
 
@@ -211,18 +212,53 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
                 break;
 
             case TickType.LAST_SIZE:
-                if (!Double.isNaN(data.last.price))
+                data.last.volume = size;
+                break;
+
+            case TickType.VOLUME:
+                if (data.volume > 0 && size-data.volume > 0)
                 {
-                    if (lastSize != size)
-                    {
-                        data.last.volume = size;
-                        data.sendTrade();
-                    }
+                    data.last.volume = size-data.volume;
+                    data.sendTrade();
                 }
+                data.volume = size;
                 break;
 
             default:
 //                l.warn("unhandled size tick type: " + TickType.getField(tickType) + " (" + tickType + ")");
+        }
+    }
+
+    @Override
+    public void updateMktDepth(int tickerId, int position, int operation, int side, double price, int size)
+    {
+        updateMktDepthL2(tickerId, position, null, operation, side, price, size);
+    }
+
+    @Override
+    public void updateMktDepthL2(int tickerId, int position, String marketMaker, int operation, int side, double price, int size)
+    {
+        InstrumentData data = dataByDepthId.get(tickerId);
+
+        if (data == null)
+        {
+            l.debug("Unknown depth id=" + tickerId);
+            return;
+        }
+
+        try
+        {
+            char op = (operation == 0) ? 'I' : (operation == 1) ? 'U' : (operation == 2) ? 'D' : ' ';
+            char si = (side == 0) ? 'A' : 'B';
+
+            for (IPriceAndTradeFeedListener listener : data.listeners)
+            {
+                listener.OnDepth(data.instrument, marketMaker, op, si, position, size, price);
+            }
+        }
+        catch(Exception e)
+        {
+            l.fatal("Exception caught while processing depth notification for " + data.instrument.getSymbol(), e);
         }
     }
 
@@ -312,41 +348,14 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
     {
         l.warn("Connection closed - clearing IDs");
         dataByTickId.clear();
+        dataByDepthId.clear();
         for (InstrumentData data : dataBySymbol.values())
         {
             data.subscriptionState = SubscriptionState.UNKNOWN;
             data.tickerId = 0;
         }
 
-    }
-
-    private Contract convertToContract(IInstrument instrument)
-    {
-        Contract contract = new Contract();
-
-        contract.m_symbol = instrument.getUnderlyingName();
-        contract.m_secType = instrument.getInstrumentType();
-        contract.m_exchange = instrument.getExchange();
-        if (instrument.getExpiryDate() != null)
-        {
-            contract.m_expiry = expiryFormat.format(instrument.getExpiryDate());
-        }
-        contract.m_currency = instrument.getCurrency();
-
-        int multiplier = instrument.getContractSize();
-
-        if (multiplier > 0)
-        {
-            contract.m_multiplier = String.valueOf(multiplier);
-        }
-
-        if (instrument.getStrikePrice() > 0)
-        {
-            contract.m_strike = instrument.getStrikePrice();
-            contract.m_right = instrument.getRight();
-        }
-
-        return contract;
+        resubscribeInactiveSubscriptions();
     }
 
     private int subscribe(InstrumentData data)
@@ -362,7 +371,7 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
         dataByTickId.put(data.tickerId, data);
         
         //data.active = true; // assume it's active for now and drop the flag if any error
-        connection.reqMktData(data.tickerId, convertToContract(data.instrument), "", false);
+        connection.reqMktData(data.tickerId, IBContractConverter.convertToContract(data.instrument), "", false);
         
         l.debug("Sent subscription request [" + data.tickerId + "] for " + data.instrument.getSymbol());
 
@@ -391,6 +400,24 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
         data.tickerId = 0;
     }
 
+    private int subscribeDepth(InstrumentData data)
+    {
+        if (!connection.isReady())
+        {
+            l.debug("Subscription request postponed for " + data.instrument.getSymbol());
+            return 0;
+        }
+
+        data.depthId = connection.getNextRequestId();
+        dataByDepthId.put(data.depthId, data);
+
+        connection.reqMktDepth(data.depthId, IBContractConverter.convertToContract(data.instrument), 40);
+
+        l.debug("Sent depth subscription request [" + data.depthId + "] for " + data.instrument.getSymbol());
+
+        return data.depthId;
+    }
+
     private void resubscribeAll()
     {
         dataByTickId.clear();
@@ -414,7 +441,22 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
         }
         l.info("Sent " + count + " subscribe requests (total instruments: " + dataBySymbol.size() + ")");
     }
-    
+
+    private void resubscribeInactiveDepth()
+    {
+        l.info("(Re)subscribing for depth data");
+        int count = 0;
+        for (InstrumentData data : dataBySymbol.values())
+        {
+            if (data.depthId != 0)
+            {
+                subscribeDepth(data);
+                ++count;
+            }
+        }
+        l.info("Sent " + count + " subscribe requests");
+    }
+
     @Override
     public void subscribeToPriceAndTradeFeed(List<IInstrument> new_instruments, List<IPriceAndTradeFeedListener> new_listeners)
     {
@@ -447,6 +489,19 @@ public class IBMarketDataProvider extends IBCallbackAdaptor implements
                 data = new InstrumentData(instrument);
                 unsubscribe(data);
                 data.listeners.removeAll(new_listeners);
+            }
+        }
+    }
+
+    @Override
+    public void subscribeToPriceDepth(List<IInstrument> new_instruments, List<IPriceAndTradeFeedListener> new_listeners)
+    {
+        for (IInstrument instrument : new_instruments)
+        {
+            InstrumentData data = dataBySymbol.get(instrument);
+            if (data != null && data.depthId == 0)
+            {
+                subscribeDepth(data);
             }
         }
     }

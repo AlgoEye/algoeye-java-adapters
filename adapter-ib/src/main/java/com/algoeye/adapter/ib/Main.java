@@ -14,6 +14,7 @@ import org.simpleframework.xml.core.Persister;
 
 import java.io.File;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Main
 {
@@ -63,6 +64,9 @@ public class Main
 
         @Element
         String subscribe;
+
+        @Element(required=false)
+        String depth;
     }
 
     public static void main(String[] args) throws Exception
@@ -86,7 +90,7 @@ public class Main
         connection.connect();
         connection.waitWhenReady();
 
-        if (!query.hasRefData())
+        //if (!query.hasRefData())
         {
             Map<String, String> formats = new HashMap<>();
             for (FormatConfig format : config.formats)
@@ -109,6 +113,11 @@ public class Main
         IBMarketDataProvider data = new IBMarketDataProvider(connection);
         multicaster.addListener(data);
         data.subscribeToPriceAndTradeFeed(instruments, Arrays.asList(writer));
+
+        List<IInstrument> depth = query.queryInstruments(config.depth);
+        List<String> depthSyms = depth.stream().map(x -> x.getSymbol()).collect(Collectors.toList());
+        depth = instruments.stream().filter(x -> depthSyms.contains(x.getSymbol())).collect(Collectors.toList());
+        data.subscribeToPriceDepth(depth, Arrays.asList(writer));
 
         while (connection.isConnected())
         {

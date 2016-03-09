@@ -47,6 +47,20 @@ public class KdbDataWriter implements IPriceAndTradeFeedListener, IContractSymbo
     }
 
     @Override
+    public void OnDepth(IInstrument instrument, String marketMaker, char operation, char side, int level, int size, double price)
+    {
+        try
+        {
+            kdb.context().ks(".u.upd", "depth", new Object[]{ instrument.getSymbol(),
+                    marketMaker != null ? marketMaker : c.NULL('s'),
+                    operation, side, level,
+                    size, price});
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
     public void OnInstrument(Instrument instrument)
     {
         try

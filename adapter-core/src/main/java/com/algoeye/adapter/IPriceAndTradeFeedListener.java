@@ -17,4 +17,14 @@ public interface IPriceAndTradeFeedListener
             IInstrument instrument,
             double price
     );
+
+    void OnDepth(
+            IInstrument instrument,
+            String marketMaker,
+            char operation,
+            char side,
+            int level,
+            int size,
+            double price
+    );
 }
